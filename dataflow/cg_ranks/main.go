@@ -33,6 +33,7 @@ type BqLine struct {
 	IsProfileOpened string `json:"isProfileOpened"`
 	IsDownloaded    string `json:"isDownloaded"`
 	IsFollowed      string `json:"isFollowed"`
+	Vplay98         bool   `json:"vplay98"`
 }
 
 type ParsedLine struct {
@@ -44,6 +45,7 @@ type ParsedLine struct {
 	IsProfileOpened bool
 	IsDownloaded    bool
 	IsFollowed      bool
+	Vplay98         bool
 }
 
 func ExtractCgRanks(line string, emit func(string, ParsedLine)) {
@@ -100,9 +102,10 @@ func ExtractCgRanks(line string, emit func(string, ParsedLine)) {
 			IsProfileOpened: isProfileOpened,
 			IsDownloaded:    isDownloaded,
 			IsFollowed:      isFollowed,
+			Vplay98:         b.Vplay98,
 		}
 		// to reduce by all these fields
-		key := fmt.Sprintf("%s-%v-%v-%v-%v-%v-%v", cgRank, pos, isLiked, isShared, isProfileOpened, isDownloaded, isFollowed)
+		key := fmt.Sprintf("%s-%v-%v-%v-%v-%v-%v-%v", cgRank, pos, isLiked, isShared, isProfileOpened, isDownloaded, isFollowed, p.Vplay98)
 		emit(key, p)
 	}
 }
@@ -148,7 +151,7 @@ func main() {
 	grouped := beam.GroupByKey(s, parsed)
 	reduced := beam.ParDo(s, ReduceFn, grouped)
 	formatted := beam.ParDo(s, func(p ParsedLine) string {
-		return fmt.Sprintf("%v", p)
+		return fmt.Sprintf("%v\t%v\t%v\t%v\t%v\t%v\t%v\t%v\t%v", p.Count, p.Pos, p.CgRank, p.IsLiked, p.IsShared, p.IsProfileOpened, p.IsDownloaded, p.IsFollowed, p.Vplay98)
 	}, reduced)
 	textio.Write(s, *output, formatted)
 
