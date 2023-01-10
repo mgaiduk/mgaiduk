@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	input  = flag.String("input", "gs://apache-beam-samples/shakespeare/kinglear.txt", "File(s) to read.")
-	output = flag.String("output", "", "Output file (required).")
+	input     = flag.String("input", "gs://mgaiduk/events_1week_2/events/events000000000000", "File(s) to read.")
+	output    = flag.String("output", "", "Output file (required).")
+	inputType = flag.String("input-type", "client_events", "client_events or candidates")
 )
 
 func init() {
@@ -110,6 +111,48 @@ func ExtractCgRanks(line string, emit func(string, ParsedLine)) {
 	}
 }
 
+type RawCandidate struct {
+	Count   int    `json:"cnt,string"`
+	CgRanks string `json:"cg_ranks"`
+}
+
+type ParsedCandidate struct {
+	Count  int
+	Pos    int
+	CgRank string
+}
+
+func ExtractCandidates(line string, emit func(string, ParsedCandidate)) {
+	var b BqLine
+	err := json.Unmarshal([]byte(line), &b)
+	if err != nil {
+		fmt.Printf("Failed to unmarshal: %v\n", line)
+		panic(err)
+	}
+	var m map[string]string
+	err = json.Unmarshal([]byte(b.CgRanks), &m)
+	if err != nil {
+		fmt.Printf("Failed to unmarshal cg_ranks %v\n", b.CgRanks)
+		panic(err)
+	}
+	for k, v := range m {
+		pos, err := strconv.Atoi(v)
+		if err != nil {
+			fmt.Printf("Failed to convert position to int %v\n", v)
+			panic(err)
+		}
+		cgRank := simplifyCgRank(k)
+		p := ParsedCandidate{
+			Count:  b.Count,
+			Pos:    pos,
+			CgRank: cgRank,
+		}
+		// to reduce by all these fields
+		key := fmt.Sprintf("%s-%v", cgRank, pos)
+		emit(key, p)
+	}
+}
+
 func simplifyCgRank(cgRank string) string {
 	// sharecone-weighted-Hindi-interaction_2kth_3day-[1]
 	for _, shareconePrefix := range []string{"sharecone-weighted-", "sharecone-weightedlag-"} {
@@ -135,27 +178,51 @@ func ReduceFn(key string, iter func(*ParsedLine) bool) ParsedLine {
 	return p
 }
 
+func ReduceFn2(key string, iter func(*ParsedCandidate) bool) ParsedCandidate {
+	var p ParsedCandidate
+	cnt := 0
+	for iter(&p) {
+		cnt += p.Count
+	}
+	p.Count = cnt
+	return p
+}
+
 func main() {
 	flag.Parse()
 	beam.Init()
-
 	if *output == "" {
 		log.Fatal("No output provided")
 	}
-
 	p := beam.NewPipeline()
 	s := p.Root()
-
 	lines := textio.Read(s, *input)
-	parsed := beam.ParDo(s, ExtractCgRanks, lines)
-	grouped := beam.GroupByKey(s, parsed)
-	reduced := beam.ParDo(s, ReduceFn, grouped)
-	formatted := beam.ParDo(s, func(p ParsedLine) string {
-		return fmt.Sprintf("%v\t%v\t%v\t%v\t%v\t%v\t%v\t%v\t%v", p.Count, p.Pos, p.CgRank, p.IsLiked, p.IsShared, p.IsProfileOpened, p.IsDownloaded, p.IsFollowed, p.Vplay98)
-	}, reduced)
-	textio.Write(s, *output, formatted)
 
-	if err := beamx.Run(context.Background(), p); err != nil {
-		log.Fatalf("Failed to execute job: %v", err)
+	if *inputType == "client_events" {
+		parsed := beam.ParDo(s, ExtractCgRanks, lines)
+		grouped := beam.GroupByKey(s, parsed)
+		reduced := beam.ParDo(s, ReduceFn, grouped)
+		formatted := beam.ParDo(s, func(p ParsedLine) string {
+			return fmt.Sprintf("%v\t%v\t%v\t%v\t%v\t%v\t%v\t%v\t%v", p.Count, p.Pos, p.CgRank, p.IsLiked, p.IsShared, p.IsProfileOpened, p.IsDownloaded, p.IsFollowed, p.Vplay98)
+		}, reduced)
+		textio.Write(s, *output, formatted)
+
+		if err := beamx.Run(context.Background(), p); err != nil {
+			log.Fatalf("Failed to execute job: %v", err)
+		}
+	} else if *inputType == "candidates" {
+		parsed := beam.ParDo(s, ExtractCandidates, lines)
+		grouped := beam.GroupByKey(s, parsed)
+		reduced := beam.ParDo(s, ReduceFn2, grouped)
+		formatted := beam.ParDo(s, func(p ParsedCandidate) string {
+			return fmt.Sprintf("%v\t%v\t%v", p.Count, p.Pos, p.CgRank)
+		}, reduced)
+		textio.Write(s, *output, formatted)
+
+		if err := beamx.Run(context.Background(), p); err != nil {
+			log.Fatalf("Failed to execute job: %v", err)
+		}
+	} else {
+		panic(fmt.Errorf("Unexpected input type: %v", *inputType))
 	}
 }
