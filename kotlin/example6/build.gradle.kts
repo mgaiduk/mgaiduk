@@ -12,6 +12,7 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
+    implementation("org.apache.hadoop:hadoop-client:3.3.5")
 }
 
 tasks.test {
@@ -23,5 +24,15 @@ kotlin {
 }
 
 application {
-    mainClass.set("MainKt")
+    mainClass.set("word-count.MainKt")
+}
+// create jar to use in hadoop
+tasks.jar {
+    manifest.attributes["Main-Class"] = "word-count.MainKt"
+    val dependencies = configurations
+        .runtimeClasspath
+        .get()
+        .map(::zipTree)
+    from(dependencies)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
