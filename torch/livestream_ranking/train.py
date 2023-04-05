@@ -23,7 +23,7 @@ model_update = "model_out/"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-type", type=str, required=True, choices=["rankerOld", "rankerV0", "rankerV00", "rankerV1", "rankerV2"])
-    parser.add_argument("--train-input-path", default="livestream_ranker_train_data", help="path to local directory with .csv files")
+    parser.add_argument("-i", "--input", default="livestream_ranker_train_data", help="path to local directory with .csv files")
     # add another int option "epochs"
     parser.add_argument("--epochs", type=int, default=5, help="number of epochs")
     parser.add_argument("--embedding-dim", type=int, help="Embedding lookup dimension")
