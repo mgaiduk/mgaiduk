@@ -27,6 +27,7 @@ def main():
     # add another int option "epochs"
     parser.add_argument("--epochs", type=int, default=5, help="number of epochs")
     parser.add_argument("--embedding-dim", type=int, help="Embedding lookup dimension")
+    print("Torch cuda device cound: ", torch.cuda.device_count())
     args = parser.parse_args()
 
     def predict(model, dataloader, feature_x=False, is_sample=False):
@@ -62,7 +63,7 @@ def main():
         return np.array(pred_lis), np.array(label_lis), np.mean(loss_lis)
 
     # train_data, val_data = train_test_split(main_df, test_size=.2, stratify=main_df['label'])
-    main_df = create_dataset(args.train_input_path)
+    main_df = create_dataset(args.input)
     train_dataset = catDataset(main_df[main_df["val"] == "0"])
     train_dataloader = DataLoader(train_dataset, batch_size= 32000, shuffle=True)
     val_dataset = catDataset(main_df[main_df["val"]=="1"])
