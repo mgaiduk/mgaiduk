@@ -5,7 +5,7 @@ import torch.optim as optim
 
 from torch.utils.data import DataLoader
 import torch
-from model import catDataset, rankerV0, rankerV1, rankerV00, rankerV2
+from model import catDataset, rankerV0, rankerV1, rankerV00, rankerV2, rankerOld
 
 import pandas as pd
 import numpy as np
@@ -22,9 +22,10 @@ model_update = "model_out/"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", type=str, required=True, choices=["rankerV0", "rankerV00", "rankerV1", "rankerV2"])
-    parser.add_argument("--train-input-path", default="livestream_train_data_train", help="path to local directory with train .csv files")
-    parser.add_argument("--validate-input-path", default="livestream_train_data_validate", help="path to local directory with validate .csv files")
+    parser.add_argument("--model-type", type=str, required=True, choices=["rankerOld", "rankerV0", "rankerV00", "rankerV1", "rankerV2"])
+    parser.add_argument("--train-input-path", default="livestream_ranker_train_data", help="path to local directory with .csv files")
+    # add another int option "epochs"
+    parser.add_argument("--epochs", type=int, default=5, help="number of epochs")
     parser.add_argument("--embedding-dim", type=int, help="Embedding lookup dimension")
     args = parser.parse_args()
 
@@ -59,25 +60,24 @@ def main():
                 break
 
         return np.array(pred_lis), np.array(label_lis), np.mean(loss_lis)
-    torch.set_num_threads(8)
 
     # train_data, val_data = train_test_split(main_df, test_size=.2, stratify=main_df['label'])
-    train_df = create_dataset(args.train_input_path)
-    val_df = create_dataset(args.validate_input_path)
-    main_df = pd.concat((train_df, val_df))
-    train_dataset = catDataset(train_df)
+    main_df = create_dataset(args.train_input_path)
+    train_dataset = catDataset(main_df[main_df["val"] == "0"])
     train_dataloader = DataLoader(train_dataset, batch_size= 32000, shuffle=True)
-    val_dataset = catDataset(val_df)
-    val_dataloader = DataLoader(val_dataset, batch_size= 32000, shuffle=True)
-
+    val_dataset = catDataset(main_df[main_df["val"]=="1"])
+    val_dataloader = DataLoader(val_dataset, batch_size= 524280, shuffle=True)
+    torch.set_num_threads(32)
 
     device = torch.device("cpu")
     learning_rate =.01
     print("args.model_type: ", args.model_type)
-    if args.model_type == "rankerV0":
+    if args.model_type == "rankerOld":
+        model = rankerOld(max(main_df['userIndex'])+1,max(main_df['creatorIndex'])+1, args.embedding_dim).float()
+    elif args.model_type == "rankerV0":
         model = rankerV0(max(main_df['userIndex'])+1,max(main_df['creatorIndex'])+1, args.embedding_dim).float()
     elif args.model_type == "rankerV00":
-        model = rankerV00(max(main_df['userIndex'])+1,max(main_df['creatorIndex'])+1, args.embedding_dim).float()
+        model = rankerV00(max(main_df['userIndex'])+1,max(main_df['creatorIndex'])+1).float()
     elif args.model_type == "rankerV1":
         model = rankerV1(max(main_df['userIndex'])+1,max(main_df['creatorIndex'])+1, args.embedding_dim).float()
     elif args.model_type == "rankerV2":
@@ -108,7 +108,7 @@ def main():
     loss_list_name = "loss_list_scratch"
     train_losses = []
     eval_aucs = []
-    for epoch in range(5):
+    for epoch in range(args.epochs):
         print(epoch)
         total_loss = 0
         step = 0
@@ -135,7 +135,7 @@ def main():
             total_loss += loss_item
 
             # progress update after every 100 batches.
-            if step % 30 == 0 and not step == 0:
+            if step % 100 == 0 and not step == 0:
                 print("train loss: ", total_loss / step)
                 train_losses.append(total_loss / step)
                 torch.cuda.empty_cache()

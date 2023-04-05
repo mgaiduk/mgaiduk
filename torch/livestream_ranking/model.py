@@ -23,6 +23,28 @@ class catDataset(Dataset):
                 torch.tensor(self.df['label'][idx]).float())
 
 
+class rankerOld(nn.Module):
+    def __init__(self, n_uemb, n_cemb, embedding_dim=64, ispretrained=False):
+        super(rankerOld, self).__init__()
+        if ispretrained:
+            self.uemb = nn.Embedding.from_pretrained(n_uemb)
+            self.cemb = nn.Embedding.from_pretrained(n_cemb)
+        else:
+            self.uemb = nn.Embedding(n_uemb, embedding_dim=embedding_dim)
+            self.cemb = nn.Embedding(n_cemb, embedding_dim=embedding_dim)
+            torch.nn.init.xavier_uniform_(self.uemb.weight)
+            torch.nn.init.xavier_uniform_(self.cemb.weight)
+        self.uemb.weight.requires_grad = True
+        self.cemb.weight.requires_grad = True
+
+    def forward(self, x1, x2):
+        user_embedding = self.uemb(x1)
+        creator_embedding = self.cemb(x2)
+
+        dot = torch.sum(torch.mul(user_embedding, creator_embedding), dim=1)
+
+        return torch.sigmoid(dot)
+
 class rankerV0(nn.Module):
     def __init__(self, n_uemb, n_cemb, embedding_dim=64, ispretrained=False):
         super(rankerV0, self).__init__()
@@ -55,7 +77,7 @@ class rankerV0(nn.Module):
 
 class rankerV00(nn.Module):
     def __init__(self, n_uemb, n_cemb, ispretrained=False):
-        super(rankerV0, self).__init__()
+        super(rankerV00, self).__init__()
         if ispretrained:
             assert False
         else:
