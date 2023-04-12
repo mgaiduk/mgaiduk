@@ -11,8 +11,11 @@ import (
 	"strconv"
 	"time"
 
+	"encoding/gob"
+
 	"github.com/apache/beam/sdks/v2/go/pkg/beam"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/io/textio"
+	"github.com/apache/beam/sdks/v2/go/pkg/beam/register"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/x/beamx"
 )
 
@@ -21,30 +24,60 @@ var (
 	output = flag.String("output", "gs://mgaiduk-us-central1/live_xgb_dataset3/csv_gzip/part*", "Output. Will contain target events from input + joined features")
 )
 
-type Event struct {
-	LivestreamId string `csv:"livestreamId"`
-	HostId       string `csv:"hostId"`
-	MemberId     string `csv:"memberId"`
-	event_time   int64  `csv:"event_time"`
-	event_name   string `csv:"event_name"`
-	duration_ms  int64  `csv:"duration_ms"`
+type TNode = map[string]any
+
+func ToString(node TNode) string {
+	for _, field := range []string{"event_time", "duration_ms", "like_counter", "gift_cheers_value", "gift_quantity"} {
+		number := node[field].(int64)
+		converted := fmt.Sprintf("%v", number)
+		node[field] = converted
+	}
+	bytes, err := json.Marshal(node)
+	if err != nil {
+		panic(err)
+	}
+	return string(bytes)
+}
+
+func NewTNode(s string) TNode {
+	var node TNode
+	err := json.Unmarshal([]byte(s), &node)
+	for _, field := range []string{"event_time", "duration_ms", "like_counter", "gift_cheers_value", "gift_quantity"} {
+		str := node[field].(string)
+		converted, err := strconv.ParseInt(str, 0, 64)
+		if err != nil {
+			panic(err)
+		}
+		node[field] = converted
+	}
+	if err != nil {
+		panic(err)
+	}
+	return node
+}
+
+func init() {
+	register.DoFn3x0[string, func(*string) bool, func(string)](&reduceFn{})
+	gob.Register(map[string]interface{}{})
 }
 
 type DecayCounter struct {
 	Value         float64
 	DecayInterval time.Duration
 	LastUpdate    time.Time
-	FieldName     string
 	EventName     string
+	Name          string
+	GetValue      func(TNode) float64
 }
 
-func NewDecayCounter(decayInterval time.Duration, fieldName, eventName string) DecayCounter {
+func NewDecayCounter(decayInterval time.Duration, eventName, name string, getValue func(TNode) float64) DecayCounter {
 	return DecayCounter{
 		Value:         0.0,
 		DecayInterval: decayInterval,
 		LastUpdate:    time.Unix(0, 0),
-		FieldName:     fieldName,
 		EventName:     eventName,
+		Name:          name,
+		GetValue:      getValue,
 	}
 }
 
@@ -55,7 +88,7 @@ func (c *DecayCounter) Decay(eventTime time.Time) {
 	c.LastUpdate = eventTime
 }
 
-func (c *DecayCounter) ConsumeEvent(event map[string]any) {
+func (c *DecayCounter) ConsumeEvent(event TNode) {
 	event_name := event["event_name"].(string)
 	if event_name != c.EventName {
 		return
@@ -63,34 +96,86 @@ func (c *DecayCounter) ConsumeEvent(event map[string]any) {
 	event_ts := event["event_time"].(int64)
 	eventTime := time.Unix(event_ts/1_000, 0)
 	if c.LastUpdate.After(eventTime) {
-		panic(fmt.Errorf("Unsorted timestamps detected!"))
+		panic(fmt.Errorf("unsorted timestamps detected"))
 	}
 	c.Decay(eventTime)
-	value := event[c.FieldName].(int64)
+	value := c.GetValue(event)
 	c.Value += float64(value)
 }
 
 func MakeCounters() []DecayCounter {
 	result := make([]DecayCounter, 0, 1)
-	result = append(result, NewDecayCounter(time.Second, "duration_ms", "view_end"))
+	for _, decay := range []time.Duration{time.Hour * 24 * 30} {
+		// timespent
+		result = append(result, NewDecayCounter(decay, "view_end", fmt.Sprintf("timespent_decay_%v", decay), func(event TNode) float64 {
+			return float64(event["duration_ms"].(int64))
+		}))
+		// lives count
+		result = append(result, NewDecayCounter(decay, "view_end", fmt.Sprintf("lives_count_%v", decay), func(event TNode) float64 {
+			duration_ms := float64(event["duration_ms"].(int64))
+			if duration_ms > 1500*60 { // 1.5 mins
+				return 1.0
+			} else {
+				return 0.0
+			}
+		}))
+		// likes
+		result = append(result, NewDecayCounter(decay, "like", fmt.Sprintf("like_count_%v", decay), func(event TNode) float64 {
+			return float64(event["like_counter"].(int64))
+		}))
+		// gifting
+		result = append(result, NewDecayCounter(decay, "gift", fmt.Sprintf("gift_count_%v", decay), func(event TNode) float64 {
+			return float64(event["gift_quantity"].(int64))
+		}))
+		result = append(result, NewDecayCounter(decay, "gift", fmt.Sprintf("gift_value_%v", decay), func(event TNode) float64 {
+			return float64(event["gift_cheers_value"].(int64) * event["gift_quantity"].(int64))
+		}))
+		// shares
+		result = append(result, NewDecayCounter(decay, "share", fmt.Sprintf("shares_%v", decay), func(event TNode) float64 {
+			return 1.0
+		}))
+		// comments
+		result = append(result, NewDecayCounter(decay, "comment", fmt.Sprintf("comments_%v", decay), func(event TNode) float64 {
+			return 1.0
+		}))
+	}
+
 	return result
 }
 
 type reduceFn struct {
-	Gap time.Duration
+	Gap    time.Duration
+	Keys   []string
+	IsLast bool
 }
 
-func (r reduceFn) ProcessElement(key string, input func(*map[string]any) bool, emit func(map[string]any)) {
-	var event map[string]any
-	events := make([]map[string]any, 0)
-	for input(&event) {
-		// apply gap to simulate runtime data processing delays
+var trainStartTime = 1679961600 // Tue 28 Mar 2023 01:00:00 BST
+
+func (r *reduceFn) ProcessElement(key string, input func(*string) bool, emit func(string)) {
+	feature_prefix := "feature_"
+	for _, k := range r.Keys {
+		feature_prefix += k
+		feature_prefix += "_"
+	}
+	feature_prefix += fmt.Sprintf("%v_", r.Gap)
+	var eventStr string
+	events := make([]TNode, 0)
+	for input(&eventStr) {
+		event := NewTNode(eventStr)
 		event_ts := event["event_time"].(int64)
 		event_name := event["event_name"].(string)
-		if event_name != "timespent_target" {
-			event_ts += int64(r.Gap.Milliseconds())
+		if event_name == "timespent_target" {
+			if event_ts < int64(trainStartTime) {
+				continue
+			}
+		} else {
+			// these events are needed for future iterations of ParDo, but not for the final results
+			emit(eventStr)
+			// apply gap to simulate runtime data processing delays
+			event_ts += int64(r.Gap.Seconds())
 		}
 		event["event_time"] = event_ts
+		// nasty bug was here with passing initial map which is a pointer!
 		events = append(events, event)
 	}
 	sort.Slice(events, func(i, j int) bool {
@@ -100,12 +185,12 @@ func (r reduceFn) ProcessElement(key string, input func(*map[string]any) bool, e
 	for _, event := range events {
 		event_name := event["event_name"].(string)
 		if event_name == "timespent_target" {
-			joined_features := event["joined_features"].([]float64)
 			for i := range counters {
-				joined_features = append(joined_features, counters[i].Value)
+				feature_name := feature_prefix + counters[i].Name
+				event[feature_name] = counters[i].Value
 			}
-			event["joined_features"] = joined_features
-			emit(event)
+			out := ToString(event)
+			emit(out)
 		} else {
 			for i := range counters {
 				counters[i].ConsumeEvent(event)
@@ -114,29 +199,48 @@ func (r reduceFn) ProcessElement(key string, input func(*map[string]any) bool, e
 	}
 }
 
-func ParseFn(event string, emit func(map[string]any)) {
+func ParseFn(event string, emit func(string)) {
+	// some debug print
 	if f {
 		fmt.Printf("%v\n", event)
 		f = false
 	}
-	var result map[string]any
+	var result TNode
 	json.Unmarshal([]byte(event), &result)
-	for _, field := range []string{"event_time", "duration_ms", "like_counter", "gift_cheers_value", "gift_quantity"} {
-		str := result[field].(string)
-		converted, err := strconv.ParseInt(str, 0, 64)
+	_, ok := result["livestreamId"].(string)
+	if ok {
+		bytes, err := json.Marshal(result)
 		if err != nil {
 			panic(err)
 		}
-		result[field] = converted
+		emit(string(bytes))
 	}
-	result["joined_features"] = make([]float64, 0)
-	_, ok := result["livestreamId"].(string)
-	if ok {
-		emit(result)
+}
+
+func FilterFn(eventStr string, emit func(string)) {
+	event := NewTNode(eventStr)
+	event_name := event["event_name"].(string)
+	if event_name == "timespent_target" {
+		// only need events used for training in the result
+		emit(eventStr)
 	}
 }
 
 var f = true
+
+func add_features(s beam.Scope, col beam.PCollection, keys []string, gap time.Duration) beam.PCollection {
+	grouped := beam.GroupByKey(s, beam.ParDo(s, func(eventStr string) (string, string) {
+		event := NewTNode(eventStr)
+		groupingKey := ""
+		for _, k := range keys {
+			groupingKey += event[k].(string)
+			groupingKey += "£" // sentinel
+		}
+		return groupingKey, ToString(event)
+	}, col))
+	reduced := beam.ParDo(s, &reduceFn{Gap: gap, Keys: keys}, grouped)
+	return reduced
+}
 
 func main() {
 	flag.Parse()
@@ -150,20 +254,21 @@ func main() {
 	features := textio.Read(s, *input)
 	parsed := beam.ParDo(s, ParseFn, features)
 	// reduce by key
-	key := "hostId"
-	grouped := beam.GroupByKey(s, beam.ParDo(s, func(event map[string]any) (string, map[string]any) {
-		k := event[key].(string)
-		return k, event
-	}, parsed))
-	reduced := beam.ParDo(s, &reduceFn{Gap: time.Hour}, grouped)
-	formatted := beam.ParDo(s, func(event map[string]any) string {
-		js, err := json.Marshal(event)
-		if err != nil {
-			panic(err)
+	for _, keys := range [][]string{
+		{"hostId"},
+		{"memberId"},
+		{"livestreamId"},
+		{"hostId", "memberId"},
+	} {
+		for _, gap := range []time.Duration{
+			time.Minute,
+			time.Hour,
+			time.Hour * 24} {
+			parsed = add_features(s, parsed, keys, gap)
 		}
-		return string(js)
-	}, reduced)
-	textio.Write(s, *output, formatted)
+	}
+	filtered := beam.ParDo(s, FilterFn, parsed)
+	textio.Write(s, *output, filtered)
 
 	if err := beamx.Run(context.Background(), p); err != nil {
 		log.Fatalf("Failed to execute job: %v", err)
