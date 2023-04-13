@@ -3,19 +3,18 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonPrimitive
-import org.apache.hadoop.io.IntWritable
 import org.apache.hadoop.io.NullWritable
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapreduce.Reducer
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration
 import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
 import org.apache.hadoop.conf.Configuration
 import kotlin.math.exp
 import kotlin.time.DurationUnit
-import kotlin.time.ExperimentalTime
 
 
 class Counter(private val decayInterval: Duration,
@@ -25,11 +24,10 @@ class Counter(private val decayInterval: Duration,
     var value = 0.0
     private var lastUpdate = Instant.fromEpochSeconds(0)
     fun update(event: MutableMap<String, JsonElement>) {
-        val eventName = event["event_name"]!!.jsonPrimitive.content
-        if (eventName != this.eventName) {
+        if (event.getEventName() != this.eventName) {
             return
         }
-        val eventTime = Instant.fromEpochSeconds(event["event_time"]!!.jsonPrimitive.content.toLong())
+        val eventTime = event.getEventTime()
         val timeDiff = eventTime - lastUpdate
         val decay = exp(-timeDiff.toDouble(DurationUnit.SECONDS) / decayInterval.toDouble(DurationUnit.SECONDS))
         value = decay * value + consumeEvent(event)
@@ -37,7 +35,7 @@ class Counter(private val decayInterval: Duration,
     }
 }
 
-fun MakeCounters() : List<Counter> {
+fun makeCounters() : List<Counter> {
     val result = mutableListOf<Counter>()
     result.add(Counter(decayInterval = 30.days,
         eventName = "view_end",
@@ -82,7 +80,6 @@ fun MakeCounters() : List<Counter> {
     return result
 }
 class TReducer : Reducer<Text, Text, Text, NullWritable>() {
-    private val gap = 1.hours
     override fun reduce(key: Text, values: Iterable<Text>, context: Context) {
         val conf: Configuration = context.configuration
         val featurePrefix = StringBuilder("feature_")
@@ -91,31 +88,34 @@ class TReducer : Reducer<Text, Text, Text, NullWritable>() {
             featurePrefix.append(k)
             featurePrefix.append("_")
         }
-        // Parse values as json into mutable map, store in a vector
-        val elements = values.map {
-            val element = Json.parseToJsonElement(it.toString()).jsonObject.toMutableMap()
-            val eventTimeSeconds = element["event_time"]!!.jsonPrimitive.content.toLong()
-            // convert eventTimeSeconds to Instant
-            var eventTime = Instant.fromEpochSeconds(eventTimeSeconds)
-            val inputType = InputType.valueOf(element[InputTypeName]!!.jsonPrimitive.content)
-            if (inputType != InputType.DATASET) {
-                eventTime += gap
-            }
-            element["event_time"] = JsonPrimitive(eventTime.epochSeconds.toString())
-            element
-        }.
-        sortedBy { it["event_time"]!!.jsonPrimitive.content }
-        val counters = MakeCounters()
-        for (element in elements) {
-            for (counter in counters) {
-                counter.update(element)
-            }
-            val inputType = InputType.valueOf(element[InputTypeName]!!.jsonPrimitive.content)
-            if (inputType == InputType.DATASET) {
-                for (counter in counters) {
-                    val featureName = featurePrefix.toString() + counter.name
-                    element[featureName] = JsonPrimitive(counter.value)
+        var elements = values.map {
+            Json.parseToJsonElement(it.toString()).jsonObject.toMutableMap()
+        }
+
+        for (gap in listOf(1.minutes, 1.hours, 1.days)) {
+            elements = elements.map {
+                if (it.getInputType() != InputType.DATASET) {
+                    it.addGap(gap)
                 }
+                it
+            }.sortedBy { it.getEventTime() }
+            val counters = makeCounters()
+            for (element in elements) {
+                for (counter in counters) {
+                    counter.update(element)
+                }
+                if (element.getInputType() == InputType.DATASET) {
+                    for (counter in counters) {
+                        val featureName = featurePrefix.toString() + "gap{$gap}_" + counter.name
+                        element[featureName] = JsonPrimitive(counter.value)
+                    }
+                } else {
+                    element.addGap(-gap)
+                }
+            }
+        }
+        for (element in elements) {
+            if (element.getInputType() == InputType.DATASET) {
                 context.write(Text(Json.encodeToString(element)), NullWritable.get())
             }
         }

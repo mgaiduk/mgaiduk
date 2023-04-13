@@ -42,16 +42,36 @@ object WordCount {
 }
 
 fun main(args: Array<String>) {
+    val jobUuid = java.util.UUID.randomUUID().toString()
+    println("Starting job with id: $jobUuid")
     val parser = ArgParser("wordcount")
+    val tmpPrefix by
+    parser.option(ArgType.String, fullName = "tmp-prefix", description =
+    "Filesystem prefix for intermediate results. Can be a local folder (/tmp/hadoop_jobs) or gs:// path").required()
     val inputFeatures by
     parser.option(ArgType.String, fullName = "input-features", description = "Input file").required()
     val inputDataset by
     parser.option(ArgType.String, fullName = "input-dataset", description = "Input file").required()
     val output by parser.option(ArgType.String, fullName = "output", shortName = "o", description = "output directory").required()
     parser.parse(args)
-
-    val code = if (WordCount.run(inputFeatures = inputFeatures,
-            inputDataset = inputDataset,
-            output = output, reduceBy = "hostId")) 0 else 1
-    kotlin.system.exitProcess(code)
+    val keyGroups = listOf("hostId", "memberId", "livestreamId", "hostId,memberId")
+    var currentInputDataset = inputDataset
+    for (i in keyGroups.indices) {
+        val keyGroup = keyGroups[i]
+        // create unique uuid
+        val uuid = java.util.UUID.randomUUID().toString()
+        val currentOutput = if (i == keyGroups.size - 1) {
+            output
+        } else {
+            "$tmpPrefix/job_$jobUuid/$uuid"
+        }
+        println("Running job with keyGroup: $keyGroup, saving output to $currentOutput")
+        val code = if (WordCount.run(inputFeatures = inputFeatures,
+                inputDataset = currentInputDataset,
+                output = currentOutput, reduceBy = keyGroup)) 0 else 1
+        if (code != 0) {
+            kotlin.system.exitProcess(code)
+        }
+        currentInputDataset = currentOutput
+    }
 }
