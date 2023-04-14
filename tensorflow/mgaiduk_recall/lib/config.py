@@ -106,6 +106,9 @@ class Config:
         self.dataset_features = []
         self.format = dic["format"]
         self.cycle_length = dic["cycle_length"]
+        self.cache = False
+        if "cache" in dic:
+            self.cache = dic["cache"]
         allowed_formats = ["csv", "tfrecord", "parquet", "bq"]
         assert self.format in allowed_formats, f"Expected format to be one of {allowed_formats}, got {self.format}"
         for feature_name, feature_dic in dic["dataset_features"].items():

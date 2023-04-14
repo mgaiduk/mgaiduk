@@ -1,0 +1,77 @@
+epochs: 5
+global_batch_size: 32768
+shuffle_buffer_size: 21267891
+cycle_length: 8
+drop_remainder: true
+format: "csv"
+compression: null
+cache: true
+dataset_features:
+    pp:
+        type: "str"
+    livestreamId:
+        type: "str"
+    hostId:
+        type: "int"
+    memberId:
+        type: "int"
+    interaction_date:
+        type: "str"
+    total_timespent:
+        type: "float"
+    livestream_exit_time:
+        type: "int"
+    label:
+        type: int
+    val:
+        type: "int"
+    positives_history:
+        type: "str"
+    negatives_history:
+        type: "str"
+    
+label: label
+model:
+    embedding_type: "cpu"
+    loss: "bce"
+    model_type: "Model"
+    learning_rate: 0.001
+    l1_regularization: 0.0
+    l2_regularization: 0.0
+    user_linear_units: [16]
+    post_linear_units: []
+    features:
+        hostId:
+            type: "embedding_lookup"
+            vocab_size: 37454
+            num_oov_buckets: 1
+            embedding_dim: 16
+            belongs_to: post
+            vocab_path: "gs://mgaiduk-us-central1/livestream_train_data_apr13_1month_hostId_vocab/csv_gzip/*.csv.gz"
+        positives_history:
+            type: "embedding_lookup"
+            convert_to_string: false
+            seq_len: 16
+            combine_mode: "attention"
+            split_by_space: true
+            convert_to_int_after_split: true
+            belongs_to: user
+            reuse_vocab: "hostId"
+            reuse_embedding: "hostId"
+        negatives_history:
+            type: "embedding_lookup"
+            convert_to_string: false
+            seq_len: 16
+            combine_mode: "attention"
+            split_by_space: true
+            convert_to_int_after_split: true
+            belongs_to: user
+            reuse_vocab: "hostId"
+            reuse_embedding: "hostId"
+        memberId:
+            type: "embedding_lookup"
+            vocab_size: 9329091
+            num_oov_buckets: 1
+            embedding_dim: 16
+            belongs_to: user
+            vocab_path: "gs://mgaiduk-us-central1/livestream_train_data_apr13_1month_memberId_vocab/csv_gzip/*.csv.gz"

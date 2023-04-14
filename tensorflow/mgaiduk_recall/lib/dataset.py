@@ -117,8 +117,10 @@ class DatasetReader:
             if self.config.shuffle_buffer_size:
                 dataset = dataset.shuffle(self.config.shuffle_buffer_size)
             dataset = dataset\
-                .batch(batch_size, drop_remainder=self.config.drop_remainder)\
-                .repeat(self.config.epochs).map(decode_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                .batch(batch_size, drop_remainder=self.config.drop_remainder).map(decode_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+            if self.config.cache:
+                dataset = dataset.cache()
+            dataset = dataset.repeat(self.config.epochs)
             return dataset
 
         def make_parquet_dataset_fn(filename):
@@ -184,6 +186,8 @@ class DatasetReader:
             dataset = bqsession.parallel_read_rows(sloppy=True, num_parallel_calls=tf.data.experimental.AUTOTUNE)
             if self.config.shuffle_buffer_size:
                 dataset = dataset.shuffle(self.config.shuffle_buffer_size)
+            if self.config.cache:
+                dataset = dataset.cache()
             dataset = dataset.repeat(self.config.epochs)
             # batching is done after repeat, so remainder batches should not happen!
             dataset = dataset.batch(batch_size)
