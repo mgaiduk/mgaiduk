@@ -70,7 +70,8 @@ fun main(args: Array<String>) {
             .mapGroups(::reduceFn)
             .flatten()
             .write()
-            .format("csv")
+            .option("compression", "gzip")
+            .format("text")
             .save(output)
     }
 }
