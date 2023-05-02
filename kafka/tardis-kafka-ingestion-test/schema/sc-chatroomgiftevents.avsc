@@ -1,0 +1,48 @@
+{
+  "name": "ScChatroomGiftEvents",
+  "type": "record",
+  "namespace": "com.sharechat.tardis.events.sc.chatroomGiftEvents",
+  "fields": [
+    {
+      "name": "chatroomId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "senderId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "receiverId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "coinsSpent",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "name": "time",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    }
+  ]
+
+}

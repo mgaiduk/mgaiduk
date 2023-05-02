@@ -1,0 +1,39 @@
+{
+  "type": "record",
+  "name": "MojLivestreamCommentEvent",
+  "namespace": "com.sharechat.tardis.events.moj.livestream.commentEvent",
+  "fields": [
+    {
+      "name": "livestreamId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "hostId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "authorId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "time",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    }
+  ]
+}
