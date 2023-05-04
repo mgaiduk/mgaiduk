@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
+
 	"github.com/linkedin/goavro/v2"
 	"github.com/segmentio/kafka-go"
-	"io/ioutil"
-	"time"
 )
 
 func NewKafkaClient() *Kafka {
@@ -30,33 +30,45 @@ type Kafka struct {
 
 func (kf *Kafka) BatchPublish(messages []kafka.Message) error {
 	fmt.Println(messages)
+
 	return kf.kafkaWriter.WriteMessages(context.Background(), messages...)
 }
 
 func main() {
 	kafkaClient := NewKafkaClient()
-	TestChatroomGiftEvents(kafkaClient)
-}ßß
+	PublishToKafka(map[string]interface{}{
+		"livestreamId":    goavro.Union("string", "livestreamId1"),
+		"hostId":          goavro.Union("string", "hostId1"),
+		"memberId":        goavro.Union("string", "memberId1"),
+		"shortPressCount": goavro.Union("int", 1),
+		"longPressCount":  goavro.Union("int", 2),
+		"time":            goavro.Union("long", 1683116230000), // Wed  3 May 2023 13:17:10 BST
+	}, "moj-livestream-likeEvent", "schema/moj-livestream-likeEvent.avsc", kafkaClient)
+	PublishToKafka(map[string]interface{}{
+		"livestreamId":    goavro.Union("string", "livestreamId1"),
+		"hostId":          goavro.Union("string", "hostId1"),
+		"memberId":        goavro.Union("string", "memberId1"),
+		"shortPressCount": goavro.Union("int", 4),
+		"longPressCount":  goavro.Union("int", 6),
+		"time":            goavro.Union("long", 1683116530000), // Wed  3 May 2023 13:22:10 BST
+	}, "moj-livestream-likeEvent", "schema/moj-livestream-likeEvent.avsc", kafkaClient)
+	PublishToKafka(map[string]interface{}{
+		"livestreamId":    goavro.Union("string", "livestreamId2"),
+		"hostId":          goavro.Union("string", "hostId1"),
+		"memberId":        goavro.Union("string", "memberId1"),
+		"shortPressCount": goavro.Union("int", 1),
+		"longPressCount":  goavro.Union("int", 1),
+		"time":            goavro.Union("long", 1683116830000), // Wed  3 May 2023 13:27:10 BST
+	}, "moj-livestream-likeEvent", "schema/moj-livestream-likeEvent.avsc", kafkaClient)
+}
 
-func TestChatroomGiftEvents(kafkaClient *Kafka) {
-	topic := "live-chatroomgiftevents"
-
-	chatroomGiftCodec := getAvroCodecBySchemaPath("schema/sc-chatroomgiftevents.avsc")
-	row1 := map[string]interface{}{
-		"chatroomId": goavro.Union("string", "1"),
-		"senderId":   goavro.Union("string", "2"),
-		"receiverId": goavro.Union("string", "3"),
-		"coinsSpent": goavro.Union("long", 10),
-		"time":       goavro.Union("long", time.Now().UnixMilli()),
-	}
-
-	fmt.Println(time.Now().Unix())
-
-	binary, err := chatroomGiftCodec.BinaryFromNative(nil, row1)
+func PublishToKafka(msg map[string]interface{}, topic, schemaPath string, kafkaClient *Kafka) {
+	codec := getAvroCodecBySchemaPath(schemaPath)
+	binary, err := codec.BinaryFromNative(nil, msg)
 	if err != nil {
 		fmt.Println("error while converting native data to avro binary", map[string]interface{}{
 			"err":  err.Error(),
-			"data": row1,
+			"data": msg,
 		})
 	}
 	err = kafkaClient.BatchPublish([]kafka.Message{
@@ -68,41 +80,10 @@ func TestChatroomGiftEvents(kafkaClient *Kafka) {
 	if err != nil {
 		fmt.Println("error while publishing message to kafka", map[string]interface{}{
 			"err":  err.Error(),
-			"data": row1,
+			"data": msg,
 		})
 	}
 }
-
-//func TestCommentEvent(kafkaClient *Kafka) {
-//	topic := "moj-livestream-commentEvent"
-//
-//	liveCreatorGradeCodec := getAvroCodecBySchemaPath("schema/livestreamCommentEvent.avsc")
-//	row1 := map[string]interface{}{
-//		"livestreamId": goavro.Union("string", "livestreamId1"),
-//		"authorId":     goavro.Union("string", "authorId2"),
-//		"hostId":       goavro.Union("string", "hostId1"),
-//		"time":         goavro.Union("long", time.Now().UnixMilli()),
-//	}
-//	binary, err := liveCreatorGradeCodec.BinaryFromNative(nil, row1)
-//	if err != nil {
-//		fmt.Println("error while converting native data to avro binary", map[string]interface{}{
-//			"err":  err.Error(),
-//			"data": row1,
-//		})
-//	}
-//	err = kafkaClient.BatchPublish([]kafka.Message{
-//		{
-//			Topic: topic,
-//			Value: binary,
-//		},
-//	})
-//	if err != nil {
-//		fmt.Println("error while publishing message to kafka", map[string]interface{}{
-//			"err":  err.Error(),
-//			"data": row1,
-//		})
-//	}
-//}
 
 func getAvroCodecBySchemaPath(filename string) *goavro.Codec {
 	data, err := ioutil.ReadFile(filename)
